@@ -6,8 +6,7 @@ var {JavaEventEmitter} = require('ringo/events');
 var BUFFER_SIZE = 768;
 
 // async read
-function readAndDiscard(channel) {
-   // allocate is expensive
+function readAndDiscard(channel, options) {
    var buffer = ByteBuffer.allocate(BUFFER_SIZE);;
    var fakeCompletionHandler = {
          completed: function() {},
@@ -21,15 +20,13 @@ function readAndDiscard(channel) {
       if (bytes == -1) {
          return;
       }
-      //console.log(java.lang.Thread.currentThread().getName() + " READ " + bytes);
       buffer.clear();
-      readAndDiscard(channel);
+      readAndDiscard(channel, options);
    });
    completionEmitter.on('failed', function(exception) {
       //console.error('Channel read failure', exception);
    });
    channel.read(buffer, null, completionEmitter.impl);
-   //console.log('Channel connected and waiting for read');
 };
 
 function writeHTTPRequest(channel, options) {
@@ -42,16 +39,28 @@ function writeHTTPRequest(channel, options) {
    channel.write(bytes).get();
 }
 
-var channels = [];
+function startChannel(options) {
+   var channel = AsynchronousSocketChannel.open();
+   channel.connect(new InetSocketAddress(options.host, options.port)).get();
+   writeHTTPRequest(channel, options);
+   readAndDiscard(channel, options);
+
+   if (options.failure > 0) {
+      // shut down this channel after a while?
+      if (Math.random() < (options.failure/100)) {
+         setTimeout(function() {
+            channel.close();
+            startChannel(options);
+         }, options.failuretime * Math.random() + (options.failuretime / 2) * 1000);
+      }
+   }
+}
+
 function onmessage(event) {
    var options = event.data;
 
    for (var i=0; i < options.connections; i++) {
-      var channel = AsynchronousSocketChannel.open();
-      channel.connect(new InetSocketAddress(options.host, options.port)).get();
-      channels.push(channel);
-      writeHTTPRequest(channel, options);
-      readAndDiscard(channel);
+      startChannel(options);
    }
 }
 
